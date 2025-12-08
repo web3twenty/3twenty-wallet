@@ -7,6 +7,16 @@ export interface Token {
   balance: string;
   logoUrl?: string;
   isNative?: boolean;
+  chainId?: number;
+}
+
+export interface Network {
+  name: string;
+  rpcUrl: string;
+  chainId: number;
+  symbol: string; // Native currency symbol (e.g., BNB, ETH)
+  explorerUrl: string;
+  routerAddress?: string; // For swapping
 }
 
 export interface WalletAccount {
@@ -20,9 +30,11 @@ export interface WalletAccount {
 export interface VaultData {
   wallets: WalletAccount[];
   customTokens: Token[];
+  customNetworks?: Network[];
 }
 
 export enum ViewState {
+  LANDING = 'LANDING',
   SETUP_PASSWORD = 'SETUP_PASSWORD',
   UNLOCK = 'UNLOCK',
   ONBOARDING = 'ONBOARDING',
@@ -30,7 +42,10 @@ export enum ViewState {
   SEED_VERIFY = 'SEED_VERIFY',
   DASHBOARD = 'DASHBOARD',
   SEND = 'SEND',
+  SWAP = 'SWAP',
   RECEIVE = 'RECEIVE',
   IMPORT_TOKEN = 'IMPORT_TOKEN',
   WALLET_DETAILS = 'WALLET_DETAILS',
+  BROWSER = 'BROWSER',
+  ADD_NETWORK = 'ADD_NETWORK',
 }
