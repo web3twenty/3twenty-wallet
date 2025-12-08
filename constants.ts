@@ -1,4 +1,5 @@
 
+
 import { Network, Token } from './types';
 
 export const TOKEN_3TWENTY_ADDRESS = "0x2ffbdfa8638422bf3a5134434387b8fb5962da2c";
@@ -15,7 +16,8 @@ export const NETWORKS: Network[] = [
     chainId: 56,
     symbol: "BNB",
     explorerUrl: "https://bscscan.com",
-    routerAddress: "0x10ED43C718714eb63d5aA57B78B54704E256024E" // PancakeSwap V2
+    routerAddress: "0x10ED43C718714eb63d5aA57B78B54704E256024E", // PancakeSwap V2
+    apiBaseUrl: "https://api.bscscan.com/api"
   },
   {
     name: "Ethereum Mainnet",
@@ -23,7 +25,8 @@ export const NETWORKS: Network[] = [
     chainId: 1,
     symbol: "ETH",
     explorerUrl: "https://etherscan.io",
-    routerAddress: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D" // Uniswap V2
+    routerAddress: "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D", // Uniswap V2
+    apiBaseUrl: "https://api.etherscan.io/api"
   },
   {
     name: "Polygon",
@@ -31,7 +34,8 @@ export const NETWORKS: Network[] = [
     chainId: 137,
     symbol: "MATIC",
     explorerUrl: "https://polygonscan.com",
-    routerAddress: "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff" // QuickSwap
+    routerAddress: "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff", // QuickSwap
+    apiBaseUrl: "https://api.polygonscan.com/api"
   },
   {
     name: "Avalanche C-Chain",
@@ -39,7 +43,7 @@ export const NETWORKS: Network[] = [
     chainId: 43114,
     symbol: "AVAX",
     explorerUrl: "https://snowtrace.io",
-    routerAddress: "0x60aE616a2155Ee3d9A68541Ba4544862310933d4" // Trader Joe (standard router interface vary, simplified for V2 compatible)
+    routerAddress: "0x60aE616a2155Ee3d9A68541Ba4544862310933d4" // Trader Joe
   }
 ];
 
@@ -172,5 +176,33 @@ export const DAPP_LIST = [
     url: "https://alpacafinance.org",
     category: "DeFi",
     color: "from-green-400 to-emerald-600"
+  },
+  {
+    name: "1inch",
+    description: "DeFi aggregator finding the best swap rates across chains.",
+    url: "https://app.1inch.io",
+    category: "DeFi",
+    color: "from-slate-600 to-slate-800"
+  },
+  {
+    name: "TofuNFT",
+    description: "The largest multichain NFT marketplace focused on GameFi.",
+    url: "https://tofunft.com",
+    category: "NFT",
+    color: "from-purple-500 to-indigo-500"
+  },
+  {
+      name: "Uniswap",
+      description: "Swap, earn, and build on the leading decentralized crypto trading protocol.",
+      url: "https://app.uniswap.org",
+      category: "DeFi",
+      color: "from-pink-500 to-rose-500"
+  },
+  {
+      name: "SushiSwap",
+      description: "Swap, earn, stack yields, lend, borrow, leverage all on one decentralized platform.",
+      url: "https://www.sushi.com",
+      category: "DeFi",
+      color: "from-fuchsia-500 to-purple-600"
   }
 ];

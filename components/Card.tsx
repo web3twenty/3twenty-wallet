@@ -3,11 +3,15 @@ import React from 'react';
 interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
   className?: string;
+  noPadding?: boolean;
 }
 
-export const Card: React.FC<CardProps> = ({ children, className = '', ...props }) => {
+export const Card: React.FC<CardProps> = ({ children, className = '', noPadding = false, ...props }) => {
   return (
-    <div className={`bg-slate-800/50 backdrop-blur-xl border border-slate-700 rounded-xl p-6 shadow-xl ${className}`} {...props}>
+    <div 
+      className={`glass-panel rounded-2xl shadow-xl transition-all duration-300 ${noPadding ? '' : 'p-6'} ${className}`} 
+      {...props}
+    >
       {children}
     </div>
   );

@@ -17,6 +17,7 @@ export interface Network {
   symbol: string; // Native currency symbol (e.g., BNB, ETH)
   explorerUrl: string;
   routerAddress?: string; // For swapping
+  apiBaseUrl?: string; // For fetching transaction history
 }
 
 export interface WalletAccount {
@@ -31,6 +32,18 @@ export interface VaultData {
   wallets: WalletAccount[];
   customTokens: Token[];
   customNetworks?: Network[];
+}
+
+export interface Transaction {
+  hash: string;
+  from: string;
+  to: string;
+  value: string;
+  timeStamp: number;
+  isError: string;
+  gasUsed: string;
+  tokenSymbol?: string;
+  tokenDecimal?: number;
 }
 
 export enum ViewState {
@@ -48,4 +61,5 @@ export enum ViewState {
   WALLET_DETAILS = 'WALLET_DETAILS',
   BROWSER = 'BROWSER',
   ADD_NETWORK = 'ADD_NETWORK',
+  TRANSACTIONS = 'TRANSACTIONS',
 }
