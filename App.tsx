@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { ViewState, WalletAccount, Token, VaultData, Network, Transaction } from './types';
@@ -429,9 +430,21 @@ export default function App() {
      }
      setPassword(setupPassword); setView(ViewState.ONBOARDING);
   };
+  
   const handleResetApp = () => {
-    if (window.confirm("Reset app?")) { localStorage.clear(); window.location.reload(); }
+    // Navigate to dedicated reset view instead of window.confirm
+    setView(ViewState.RESET_WALLET);
   };
+
+  const handleConfirmReset = () => {
+    localStorage.removeItem('3twenty_vault');
+    localStorage.clear();
+    setWallets([]);
+    setActiveWalletId(null);
+    setPassword("");
+    window.location.reload(); 
+  };
+
   const handleStartCreateWallet = () => {
     const w = createWallet();
     setTempWallet({ id: Date.now().toString(), name: `Wallet ${wallets.length+1}`, ...w });
@@ -474,6 +487,36 @@ export default function App() {
   const isAuthView = [ViewState.DASHBOARD, ViewState.SEND, ViewState.RECEIVE, ViewState.SWAP, ViewState.BROWSER, ViewState.WALLET_DETAILS, ViewState.IMPORT_TOKEN, ViewState.ADD_NETWORK, ViewState.TRANSACTIONS].includes(view);
 
   if (!isAuthView) {
+     // RESET WALLET VIEW
+     if (view === ViewState.RESET_WALLET) return (
+       <div className="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
+          <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0 pointer-events-none">
+             <div className="absolute top-[50%] left-[50%] w-[80%] h-[80%] -translate-x-1/2 -translate-y-1/2 bg-red-600/10 rounded-full blur-[120px]"></div>
+          </div>
+          <Card className="max-w-md w-full relative z-10 border-red-900/40 shadow-2xl bg-slate-900/90 backdrop-blur-2xl p-8 ring-1 ring-red-500/20">
+             <div className="flex flex-col items-center text-center mb-6">
+                <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mb-4 border border-red-500/20">
+                   <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                </div>
+                <h1 className="text-2xl font-bold text-white mb-2">Reset Wallet?</h1>
+                <p className="text-slate-400 text-sm leading-relaxed">
+                   This action will <strong>permanently delete</strong> the wallet stored on this browser. 
+                   <br/><br/>
+                   If you have forgotten your password, this is the only way to regain access. You <strong>MUST</strong> have your 12-word Secret Recovery Phrase to restore your funds.
+                </p>
+             </div>
+             <div className="flex flex-col gap-3">
+                <Button onClick={handleConfirmReset} className="w-full bg-red-600 hover:bg-red-700 text-white border-red-500 py-4 font-bold shadow-lg shadow-red-900/20" size="lg">
+                   Yes, Delete & Reset
+                </Button>
+                <Button onClick={() => setView(ViewState.UNLOCK)} variant="secondary" className="w-full py-3" size="lg">
+                   Cancel
+                </Button>
+             </div>
+          </Card>
+       </div>
+     );
+
      // UNLOCK VIEW
      if (view === ViewState.UNLOCK) return (
         <div className="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
@@ -484,7 +527,15 @@ export default function App() {
            </div>
 
           <Card className="max-w-md w-full relative z-10 border-slate-700/40 shadow-2xl bg-slate-900/70 backdrop-blur-2xl p-10 ring-1 ring-white/10">
-             <div className="flex flex-col items-center mb-10">
+             {/* Back Button */}
+             <div className="absolute top-5 left-5">
+                <button onClick={() => setView(ViewState.LANDING)} className="text-slate-500 hover:text-white flex items-center gap-1 text-xs font-bold uppercase tracking-wider transition-colors group">
+                   <svg className="w-4 h-4 group-hover:-translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
+                   Back
+                </button>
+             </div>
+
+             <div className="flex flex-col items-center mb-10 mt-2">
                <div className="w-24 h-24 bg-gradient-to-br from-slate-800 to-slate-900 rounded-3xl flex items-center justify-center mb-6 shadow-xl border border-slate-700/50">
                  <img src={HEADER_LOGO_URL} className="h-14 w-auto object-contain drop-shadow-md" alt="Logo" />
                </div>
@@ -512,8 +563,10 @@ export default function App() {
                
                <Button onClick={handleUnlock} className="w-full py-4 text-lg font-bold shadow-lg shadow-blue-900/30 hover:shadow-blue-900/50 hover:-translate-y-0.5 transition-all bg-gradient-to-r from-blue-600 to-blue-700" size="lg">Unlock Wallet</Button>
                
-               <div className="pt-6 border-t border-slate-800/50 flex justify-center">
-                  <button onClick={handleResetApp} className="text-slate-500 text-xs hover:text-red-400 transition-colors font-medium px-3 py-1.5 rounded hover:bg-red-900/10">Reset Wallet</button>
+               <div className="pt-6 border-t border-slate-800/50 flex flex-col items-center gap-3">
+                  <button onClick={handleResetApp} className="text-slate-400 text-sm hover:text-red-400 transition-colors font-medium px-4 py-2 rounded-lg hover:bg-red-900/10 w-full border border-transparent hover:border-red-900/20">
+                    Forgot Password?
+                  </button>
                </div>
              </div>
 
