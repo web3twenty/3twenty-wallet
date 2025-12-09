@@ -18,7 +18,8 @@ import {
   checkAllowance,
   approveToken,
   executeSwap,
-  fetchTransactions
+  fetchTransactions,
+  fetchTokenPrices
 } from './services/cryptoService';
 import { askGemini } from './services/geminiService';
 import { DEFAULT_TOKENS, HEADER_LOGO_URL, DAPP_LIST, NETWORKS } from './constants';
@@ -45,6 +46,8 @@ export default function App() {
   // --- UI State ---
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editNameInput, setEditNameInput] = useState("");
 
   // --- Input Forms ---
   const [setupPassword, setSetupPassword] = useState("");
@@ -84,7 +87,7 @@ export default function App() {
   // Browser State
   const [browserUrl, setBrowserUrl] = useState("");
   const [browserPage, setBrowserPage] = useState(1);
-  const BROWSER_ITEMS_PER_PAGE = 6;
+  const BROWSER_ITEMS_PER_PAGE = 8;
 
   // --- Onboarding / Seed State ---
   const [tempWallet, setTempWallet] = useState<WalletAccount | null>(null);
@@ -101,6 +104,13 @@ export default function App() {
 
   // Filter tokens by active network
   const currentNetworkTokens = tokens.filter(t => t.chainId === activeNetwork.chainId);
+
+  // Calculate Total Balance
+  const totalFiatBalance = currentNetworkTokens.reduce((acc, token) => {
+    const bal = parseFloat(token.balance);
+    const price = token.priceUsd || 0;
+    return acc + (bal * price);
+  }, 0);
 
   // --- Initialization ---
   useEffect(() => {
@@ -143,6 +153,7 @@ export default function App() {
     const relevantTokens = tokens.filter(t => t.chainId === activeNetwork.chainId);
     const updatedTokens = [...tokens];
 
+    // 1. Fetch Balances
     for (const token of relevantTokens) {
       try {
         let bal = "0";
@@ -157,12 +168,31 @@ export default function App() {
         if (idx !== -1) {
           updatedTokens[idx] = { ...updatedTokens[idx], balance: bal };
         }
-        await new Promise(r => setTimeout(r, 200));
+        // Small delay to prevent blocking UI too much
+        await new Promise(r => setTimeout(r, 50));
       } catch (e) {
         console.error(`Error fetching balance for ${token.symbol}`, e);
       }
     }
-    setTokens(updatedTokens);
+    
+    // Update state with balances first
+    setTokens([...updatedTokens]);
+
+    // 2. Fetch Prices (Batch)
+    try {
+        const prices = await fetchTokenPrices(relevantTokens, activeNetwork);
+        // Update tokens with prices
+        const tokensWithPrices = updatedTokens.map(t => {
+            if (t.chainId === activeNetwork.chainId && prices[t.address.toLowerCase()]) {
+                return { ...t, priceUsd: prices[t.address.toLowerCase()] };
+            }
+            return t;
+        });
+        setTokens(tokensWithPrices);
+    } catch (e) {
+        console.warn("Price update failed", e);
+    }
+
     setIsLoading(false);
   }, [activeWallet, tokens, activeNetwork]);
 
@@ -363,6 +393,28 @@ export default function App() {
     setStatusMessage({ type: 'success', text: 'Network added!' });
   };
 
+  // --- Handlers: Wallet Management ---
+
+  const handleSaveWalletName = () => {
+    if (!activeWallet || !editNameInput.trim()) return;
+    const updatedWallets = wallets.map(w => 
+      w.id === activeWallet.id ? { ...w, name: editNameInput.trim() } : w
+    );
+    setWallets(updatedWallets);
+    setIsEditingName(false);
+    setStatusMessage({ type: 'success', text: 'Wallet renamed successfully.' });
+  };
+  
+  const handleSwitchWallet = (walletId: string) => {
+    setActiveWalletId(walletId);
+    setView(ViewState.DASHBOARD);
+  };
+  
+  const handleAddNewWallet = () => {
+     setImportInput("");
+     setView(ViewState.ADD_WALLET_SELECT);
+  };
+
   // --- Handlers: Other Actions ---
 
   const handleSend = async () => {
@@ -432,7 +484,6 @@ export default function App() {
   };
   
   const handleResetApp = () => {
-    // Navigate to dedicated reset view instead of window.confirm
     setView(ViewState.RESET_WALLET);
   };
 
@@ -451,7 +502,7 @@ export default function App() {
     setView(ViewState.SEED_BACKUP);
   };
   const handleSeedBackupConfirmed = () => {
-    setSeedVerifyIndices([0, 5, 11]); // simplified for brevity
+    setSeedVerifyIndices([0, 5, 11]); 
     setSeedVerifyInputs({});
     setView(ViewState.SEED_VERIFY);
   };
@@ -463,7 +514,7 @@ export default function App() {
   const handleImportWallet = () => {
      try {
        const w = importInput.includes(" ") ? importWalletFromMnemonic(importInput) : importWalletFromPrivateKey(importInput);
-       const newW = { id: Date.now().toString(), name: `Imp ${wallets.length}`, ...w };
+       const newW = { id: Date.now().toString(), name: `Wallet ${wallets.length+1}`, ...w };
        setWallets([...wallets, newW]); setActiveWalletId(newW.id); setView(ViewState.DASHBOARD);
      } catch(e) { setStatusMessage({type:'error', text: 'Invalid key'}); }
   };
@@ -484,19 +535,15 @@ export default function App() {
   const navigateTo = (v: ViewState) => { setView(v); setIsMenuOpen(false); };
 
   // --- RENDER ---
-  const isAuthView = [ViewState.DASHBOARD, ViewState.SEND, ViewState.RECEIVE, ViewState.SWAP, ViewState.BROWSER, ViewState.WALLET_DETAILS, ViewState.IMPORT_TOKEN, ViewState.ADD_NETWORK, ViewState.TRANSACTIONS].includes(view);
+  const isAuthView = [ViewState.DASHBOARD, ViewState.SEND, ViewState.RECEIVE, ViewState.SWAP, ViewState.BROWSER, ViewState.WALLET_DETAILS, ViewState.IMPORT_TOKEN, ViewState.ADD_NETWORK, ViewState.TRANSACTIONS, ViewState.ADD_WALLET_SELECT].includes(view);
 
   if (!isAuthView) {
-     // RESET WALLET VIEW
      if (view === ViewState.RESET_WALLET) return (
        <div className="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
-          <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0 pointer-events-none">
-             <div className="absolute top-[50%] left-[50%] w-[80%] h-[80%] -translate-x-1/2 -translate-y-1/2 bg-red-600/10 rounded-full blur-[120px]"></div>
-          </div>
           <Card className="max-w-md w-full relative z-10 border-red-900/40 shadow-2xl bg-slate-900/90 backdrop-blur-2xl p-8 ring-1 ring-red-500/20">
              <div className="flex flex-col items-center text-center mb-6">
-                <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mb-4 border border-red-500/20">
-                   <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mb-4 border border-red-500/20">
+                   <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
                 </div>
                 <h1 className="text-2xl font-bold text-white mb-2">Reset Wallet?</h1>
                 <p className="text-slate-400 text-sm leading-relaxed">
@@ -506,7 +553,7 @@ export default function App() {
                 </p>
              </div>
              <div className="flex flex-col gap-3">
-                <Button onClick={handleConfirmReset} className="w-full bg-red-600 hover:bg-red-700 text-white border-red-500 py-4 font-bold shadow-lg shadow-red-900/20" size="lg">
+                <Button onClick={handleConfirmReset} className="w-full bg-red-600 hover:bg-red-700 text-white border-red-500 py-3 font-bold shadow-lg shadow-red-900/20" size="lg">
                    Yes, Delete & Reset
                 </Button>
                 <Button onClick={() => setView(ViewState.UNLOCK)} variant="secondary" className="w-full py-3" size="lg">
@@ -517,17 +564,14 @@ export default function App() {
        </div>
      );
 
-     // UNLOCK VIEW
      if (view === ViewState.UNLOCK) return (
         <div className="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
-           {/* Background Effects */}
            <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0 pointer-events-none">
               <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] bg-blue-600/10 rounded-full blur-[120px] animate-pulse"></div>
               <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-purple-600/10 rounded-full blur-[120px] animate-pulse"></div>
            </div>
 
           <Card className="max-w-md w-full relative z-10 border-slate-700/40 shadow-2xl bg-slate-900/70 backdrop-blur-2xl p-10 ring-1 ring-white/10">
-             {/* Back Button */}
              <div className="absolute top-5 left-5">
                 <button onClick={() => setView(ViewState.LANDING)} className="text-slate-500 hover:text-white flex items-center gap-1 text-xs font-bold uppercase tracking-wider transition-colors group">
                    <svg className="w-4 h-4 group-hover:-translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
@@ -536,8 +580,8 @@ export default function App() {
              </div>
 
              <div className="flex flex-col items-center mb-10 mt-2">
-               <div className="w-24 h-24 bg-gradient-to-br from-slate-800 to-slate-900 rounded-3xl flex items-center justify-center mb-6 shadow-xl border border-slate-700/50">
-                 <img src={HEADER_LOGO_URL} className="h-14 w-auto object-contain drop-shadow-md" alt="Logo" />
+               <div className="w-20 h-20 bg-gradient-to-br from-slate-800 to-slate-900 rounded-3xl flex items-center justify-center mb-6 shadow-xl border border-slate-700/50">
+                 <img src={HEADER_LOGO_URL} className="h-12 w-auto object-contain drop-shadow-md" alt="Logo" />
                </div>
                <h1 className="text-3xl font-bold text-white tracking-tight">Welcome Back</h1>
                <p className="text-slate-400 text-sm mt-2 font-medium">Secure. Non-Custodial. Yours.</p>
@@ -572,7 +616,6 @@ export default function App() {
 
              {statusMessage && (
                <div className="mt-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center animate-in fade-in slide-in-from-top-1 flex items-center justify-center gap-2">
-                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
                  {statusMessage.text}
                </div>
              )}
@@ -582,94 +625,183 @@ export default function App() {
 
      if (view === ViewState.LANDING) {
         return (
-          <div className="min-h-screen flex flex-col font-sans">
-             {/* Landing Nav */}
-             <div className="max-w-7xl mx-auto w-full p-6 flex justify-between items-center z-20 relative">
-                <div className="flex items-center gap-3">
-                   <img src={HEADER_LOGO_URL} className="h-10 w-auto" />
-                   <span className="font-bold text-xl tracking-tight hidden sm:block">3Twenty Wallet</span>
+          <div className="min-h-screen flex flex-col font-sans bg-slate-950 selection:bg-blue-500/30">
+             {/* Sticky Nav */}
+             <nav className="fixed w-full z-50 bg-slate-950/80 backdrop-blur-md border-b border-white/5">
+                <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <img src={HEADER_LOGO_URL} className="h-10 w-auto" alt="Logo" />
+                        <span className="font-bold text-xl tracking-tight text-white hidden sm:block">3Twenty Wallet</span>
+                    </div>
+                    <div className="flex gap-4">
+                        <Button variant="ghost" onClick={() => setView(ViewState.UNLOCK)} className="hidden sm:flex">Login</Button>
+                        <Button onClick={() => setView(ViewState.SETUP_PASSWORD)} className="shadow-lg shadow-blue-500/20">Get Started</Button>
+                    </div>
                 </div>
-                <div className="flex gap-4">
-                  <Button variant="ghost" onClick={() => setView(ViewState.UNLOCK)}>Login</Button>
-                  <Button onClick={() => setView(ViewState.SETUP_PASSWORD)}>Get Started</Button>
-                </div>
-             </div>
-             
-             {/* Hero */}
-             <div className="flex-1 flex flex-col items-center justify-center px-6 relative overflow-hidden pb-20 pt-10">
-                 {/* Decorative Mesh */}
+             </nav>
+
+             {/* Hero Section */}
+             <section className="relative pt-32 pb-20 px-6 overflow-hidden flex flex-col items-center text-center">
+                 {/* Background FX */}
                  <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                    <div className="absolute top-[20%] left-[20%] w-96 h-96 bg-blue-600/20 rounded-full blur-[128px] animate-pulse"></div>
-                    <div className="absolute bottom-[20%] right-[20%] w-96 h-96 bg-emerald-500/10 rounded-full blur-[128px] animate-pulse delay-1000"></div>
+                    <div className="absolute top-[10%] left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-blue-600/10 rounded-full blur-[128px] animate-pulse"></div>
+                    <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-purple-600/10 rounded-full blur-[128px]"></div>
                  </div>
 
-                <div className="relative z-10 text-center max-w-4xl mx-auto">
-                   <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-900/30 border border-blue-500/30 text-blue-300 text-sm font-medium mb-8 backdrop-blur-md animate-in slide-in-from-bottom-5 fade-in duration-700">
-                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
-                      Now with AI Assistant & Swap
-                   </div>
-                   <h1 className="text-5xl md:text-7xl font-extrabold mb-8 leading-tight tracking-tight text-white drop-shadow-sm animate-in slide-in-from-bottom-5 fade-in duration-700 delay-100">
-                      Your Gateway to <br/> 
-                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-400 to-emerald-400">Decentralized Finance</span>
-                   </h1>
-                   <p className="text-slate-400 mb-10 max-w-2xl mx-auto text-lg md:text-xl leading-relaxed animate-in slide-in-from-bottom-5 fade-in duration-700 delay-200">
-                      Secure, non-custodial, and AI-powered. Manage your assets across Binance Smart Chain, Ethereum, and Polygon with confidence.
-                   </p>
-                   <div className="flex flex-col sm:flex-row gap-4 justify-center animate-in slide-in-from-bottom-5 fade-in duration-700 delay-300">
-                      <Button onClick={() => setView(ViewState.SETUP_PASSWORD)} className="px-10 py-4 text-lg shadow-blue-500/25 shadow-xl hover:scale-105 transition-transform" size="lg">Create Free Wallet</Button>
-                      <Button onClick={() => setView(ViewState.UNLOCK)} variant="secondary" className="px-10 py-4 text-lg hover:scale-105 transition-transform" size="lg">Access Wallet</Button>
-                   </div>
-                </div>
-             </div>
+                 <div className="relative z-10 max-w-4xl mx-auto">
+                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/50 border border-slate-700/50 text-blue-300 text-sm font-bold mb-8 backdrop-blur-md animate-in slide-in-from-bottom-5 fade-in duration-700 shadow-xl ring-1 ring-white/10">
+                       <span className="flex h-2 w-2 relative">
+                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                         <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                       </span>
+                       Now with Gemini AI Integration
+                    </div>
+                    
+                    <h1 className="text-5xl md:text-7xl font-extrabold mb-8 leading-[1.1] tracking-tight text-white drop-shadow-2xl animate-in slide-in-from-bottom-5 fade-in duration-700 delay-100">
+                       The Intelligent <br/>
+                       <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-400 to-emerald-400">Crypto Wallet</span>
+                    </h1>
+                    
+                    <p className="text-slate-400 mb-10 max-w-2xl mx-auto text-lg md:text-xl leading-relaxed animate-in slide-in-from-bottom-5 fade-in duration-700 delay-200">
+                       Manage assets, swap tokens, and explore Web3 across BSC, Ethereum, and Polygon. Secure, non-custodial, and powered by AI.
+                    </p>
+                    
+                    <div className="flex flex-col sm:flex-row gap-5 justify-center animate-in slide-in-from-bottom-5 fade-in duration-700 delay-300">
+                       <Button onClick={() => setView(ViewState.SETUP_PASSWORD)} className="px-8 py-4 text-lg shadow-blue-500/25 shadow-xl hover:scale-105 transition-transform font-bold" size="lg">Create Free Wallet</Button>
+                       <Button onClick={() => setView(ViewState.UNLOCK)} variant="secondary" className="px-8 py-4 text-lg hover:scale-105 transition-transform font-bold" size="lg">Access Existing</Button>
+                    </div>
 
-             {/* Features Grid */}
-             <div className="bg-slate-900/50 border-t border-slate-800/50 backdrop-blur-lg relative z-10">
-               <div className="max-w-7xl mx-auto w-full px-6 py-20">
-                  <div className="text-center mb-16">
-                     <h2 className="text-3xl font-bold mb-4">Why choose 3Twenty?</h2>
-                     <p className="text-slate-400">Built for security, designed for ease of use.</p>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                     <Card className="p-8 border-t-4 border-t-emerald-500 hover:-translate-y-2 transition-transform duration-300 bg-slate-800/40">
-                        <div className="w-12 h-12 bg-emerald-500/10 rounded-xl flex items-center justify-center mb-4 text-emerald-400">
-                           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-                        </div>
-                        <h3 className="font-bold text-lg mb-2 text-emerald-100">Self Custodial</h3>
-                        <p className="text-sm text-slate-400 leading-relaxed">Your keys NEVER leave your device. Complete control over your assets.</p>
-                     </Card>
-                     <Card className="p-8 border-t-4 border-t-blue-500 hover:-translate-y-2 transition-transform duration-300 bg-slate-800/40">
-                        <div className="w-12 h-12 bg-blue-500/10 rounded-xl flex items-center justify-center mb-4 text-blue-400">
-                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                        </div>
-                        <h3 className="font-bold text-lg mb-2 text-blue-100">Lightning Fast</h3>
-                        <p className="text-sm text-slate-400 leading-relaxed">Optimized for speed on BSC and other EVM chains. Instant interactions.</p>
-                     </Card>
-                     <Card className="p-8 border-t-4 border-t-purple-500 hover:-translate-y-2 transition-transform duration-300 bg-slate-800/40">
-                        <div className="w-12 h-12 bg-purple-500/10 rounded-xl flex items-center justify-center mb-4 text-purple-400">
-                           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-                        </div>
-                        <h3 className="font-bold text-lg mb-2 text-purple-100">AI Assistant</h3>
-                        <p className="text-sm text-slate-400 leading-relaxed">Integrated Gemini AI helps you understand transactions and concepts.</p>
-                     </Card>
-                     <Card className="p-8 border-t-4 border-t-orange-500 hover:-translate-y-2 transition-transform duration-300 bg-slate-800/40">
-                        <div className="w-12 h-12 bg-orange-500/10 rounded-xl flex items-center justify-center mb-4 text-orange-400">
-                           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                        </div>
-                        <h3 className="font-bold text-lg mb-2 text-orange-100">Multi-Chain</h3>
-                        <p className="text-sm text-slate-400 leading-relaxed">One wallet for all your assets. Seamlessly switch networks.</p>
-                     </Card>
-                  </div>
-               </div>
-             </div>
+                    {/* Mockup / Visual Preview */}
+                    <div className="mt-16 relative mx-auto max-w-3xl animate-in slide-in-from-bottom-10 fade-in duration-1000 delay-500">
+                         <div className="absolute -inset-1 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl blur opacity-20"></div>
+                         <div className="relative bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 rounded-2xl p-4 shadow-2xl ring-1 ring-white/10">
+                             <div className="flex items-center gap-2 mb-4 border-b border-slate-800 pb-4">
+                                 <div className="flex gap-1.5">
+                                     <div className="w-3 h-3 rounded-full bg-red-500/50"></div>
+                                     <div className="w-3 h-3 rounded-full bg-yellow-500/50"></div>
+                                     <div className="w-3 h-3 rounded-full bg-green-500/50"></div>
+                                 </div>
+                                 <div className="bg-slate-800 h-6 w-48 rounded-md mx-auto"></div>
+                             </div>
+                             <div className="grid grid-cols-3 gap-4">
+                                 <div className="col-span-1 space-y-3">
+                                     <div className="h-20 bg-slate-800/50 rounded-xl"></div>
+                                     <div className="h-8 bg-slate-800/50 rounded-xl"></div>
+                                     <div className="h-8 bg-slate-800/50 rounded-xl"></div>
+                                 </div>
+                                 <div className="col-span-2 space-y-3">
+                                      <div className="h-40 bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl border border-slate-700/50 p-6 flex flex-col justify-center items-center">
+                                          <div className="text-3xl font-bold text-white mb-2">$12,450.00</div>
+                                          <div className="flex gap-2">
+                                              <div className="h-8 w-24 bg-blue-600 rounded-lg"></div>
+                                              <div className="h-8 w-24 bg-slate-700 rounded-lg"></div>
+                                          </div>
+                                      </div>
+                                 </div>
+                             </div>
+                         </div>
+                    </div>
+                 </div>
+             </section>
+
+             {/* Supported Chains Strip */}
+             <section className="border-y border-white/5 bg-slate-900/30 backdrop-blur-sm py-10">
+                 <div className="max-w-7xl mx-auto px-6 text-center">
+                     <p className="text-slate-500 text-xs font-bold uppercase tracking-[0.2em] mb-6">Native Support For Top Chains</p>
+                     <div className="flex flex-wrap justify-center gap-8 md:gap-16 opacity-70 grayscale hover:grayscale-0 transition-all duration-500">
+                         <div className="flex items-center gap-2 font-bold text-xl text-yellow-500"><span className="w-8 h-8 rounded-full bg-yellow-500/20 flex items-center justify-center">B</span> BSC</div>
+                         <div className="flex items-center gap-2 font-bold text-xl text-blue-400"><span className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">E</span> Ethereum</div>
+                         <div className="flex items-center gap-2 font-bold text-xl text-purple-500"><span className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center">P</span> Polygon</div>
+                         <div className="flex items-center gap-2 font-bold text-xl text-red-500"><span className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center">A</span> Avalanche</div>
+                     </div>
+                 </div>
+             </section>
+
+             {/* Bento Grid Features */}
+             <section className="py-24 px-6 max-w-7xl mx-auto">
+                 <div className="mb-16 text-center max-w-2xl mx-auto">
+                     <h2 className="text-3xl md:text-5xl font-bold mb-6">Everything you need, <br/> in one secure place.</h2>
+                     <p className="text-slate-400 text-lg">We've combined the power of a pro-level exchange with the simplicity of a mobile wallet.</p>
+                 </div>
+                 
+                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 auto-rows-[300px]">
+                     {/* Feature 1: Large AI Card */}
+                     <div className="md:col-span-2 row-span-1 md:row-span-1 rounded-3xl bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 p-8 relative overflow-hidden group hover:border-blue-500/30 transition-all shadow-2xl">
+                         <div className="absolute top-0 right-0 w-64 h-64 bg-blue-600/10 rounded-full blur-3xl -mr-10 -mt-10 group-hover:bg-blue-600/20 transition-all"></div>
+                         <div className="relative z-10 h-full flex flex-col justify-between">
+                             <div>
+                                 <div className="w-12 h-12 bg-blue-500/20 rounded-2xl flex items-center justify-center mb-4 text-blue-400">
+                                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                 </div>
+                                 <h3 className="text-2xl font-bold text-white mb-2">AI-Powered Assistant</h3>
+                                 <p className="text-slate-400 max-w-sm">Not sure what a transaction does? Ask our integrated Gemini AI. It analyzes contracts and explains DeFi concepts in plain English.</p>
+                             </div>
+                             <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50 backdrop-blur max-w-md mt-4">
+                                 <div className="flex gap-3">
+                                     <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 shrink-0"></div>
+                                     <div className="space-y-2 w-full">
+                                         <div className="h-2 bg-slate-700 rounded w-3/4"></div>
+                                         <div className="h-2 bg-slate-700 rounded w-1/2"></div>
+                                     </div>
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+
+                     {/* Feature 2: Security */}
+                     <div className="md:col-span-1 rounded-3xl bg-slate-900/50 border border-slate-800 p-8 relative overflow-hidden group hover:border-emerald-500/30 transition-all">
+                         <div className="absolute bottom-0 right-0 w-40 h-40 bg-emerald-500/10 rounded-full blur-3xl group-hover:bg-emerald-500/20 transition-all"></div>
+                         <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center mb-4 text-emerald-400">
+                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                         </div>
+                         <h3 className="text-xl font-bold text-white mb-2">Non-Custodial</h3>
+                         <p className="text-slate-400 text-sm leading-relaxed">Your keys, your crypto. Encrypted locally on your device. We never have access to your funds.</p>
+                     </div>
+
+                     {/* Feature 3: Swap */}
+                     <div className="md:col-span-1 rounded-3xl bg-slate-900/50 border border-slate-800 p-8 relative overflow-hidden group hover:border-purple-500/30 transition-all">
+                         <div className="w-12 h-12 bg-purple-500/20 rounded-2xl flex items-center justify-center mb-4 text-purple-400">
+                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+                         </div>
+                         <h3 className="text-xl font-bold text-white mb-2">Instant Swaps</h3>
+                         <p className="text-slate-400 text-sm leading-relaxed">Trade tokens directly from your wallet with the best rates across major DEXs.</p>
+                     </div>
+
+                     {/* Feature 4: Web3 Browser */}
+                     <div className="md:col-span-2 rounded-3xl bg-slate-900/50 border border-slate-800 p-8 relative overflow-hidden group hover:border-orange-500/30 transition-all flex items-center">
+                         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+                         <div className="relative z-10 w-full">
+                             <div className="w-12 h-12 bg-orange-500/20 rounded-2xl flex items-center justify-center mb-4 text-orange-400">
+                                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>
+                             </div>
+                             <h3 className="text-2xl font-bold text-white mb-2">Web3 Browser</h3>
+                             <p className="text-slate-400 max-w-lg">Connect to your favorite DApps like PancakeSwap, OpenSea, and more. A gateway to the decentralized web.</p>
+                         </div>
+                     </div>
+                 </div>
+             </section>
+
+             {/* Final CTA */}
+             <section className="py-20 px-6">
+                 <div className="max-w-4xl mx-auto bg-gradient-to-r from-blue-900 to-indigo-900 rounded-[2.5rem] p-12 text-center relative overflow-hidden border border-blue-500/30 shadow-2xl">
+                     <div className="absolute top-0 left-0 w-full h-full bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10"></div>
+                     <div className="relative z-10">
+                         <h2 className="text-4xl md:text-5xl font-extrabold mb-6 text-white tracking-tight">Ready to take control?</h2>
+                         <p className="text-blue-200 text-lg mb-10 max-w-xl mx-auto">Join thousands of users who trust 3Twenty for their DeFi journey. No sign-up required, just create a wallet and go.</p>
+                         <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                            <Button onClick={() => setView(ViewState.SETUP_PASSWORD)} className="px-10 py-5 text-lg bg-white text-blue-900 hover:bg-blue-50 hover:text-blue-950 shadow-xl border-0 font-extrabold" size="lg">Create Free Wallet</Button>
+                         </div>
+                     </div>
+                 </div>
+             </section>
+
              <Footer />
           </div>
         );
      }
      
-     // SETUP PASSWORD VIEW
      if (view === ViewState.SETUP_PASSWORD) return (
        <div className="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
-          {/* Background Effects */}
           <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0 pointer-events-none">
               <div className="absolute top-[-20%] right-[-20%] w-[60%] h-[60%] bg-emerald-600/10 rounded-full blur-[100px] animate-pulse"></div>
               <div className="absolute bottom-[-20%] left-[-20%] w-[60%] h-[60%] bg-blue-600/10 rounded-full blur-[100px] animate-pulse"></div>
@@ -754,37 +886,68 @@ export default function App() {
      );
 
      if (view === ViewState.ONBOARDING) return (
-       <div className="min-h-screen flex items-center justify-center p-4">
-          <Card className="max-w-md w-full p-8">
-            <h1 className="text-2xl font-bold mb-2">Setup Wallet</h1>
-            <p className="text-slate-400 text-sm mb-6">Create a new wallet or import an existing one.</p>
+       <div className="min-h-screen flex items-center justify-center p-4 max-w-2xl mx-auto">
+          <div className="space-y-6 w-full">
+            <h1 className="text-3xl font-bold text-center mb-8">Setup Your Wallet</h1>
             
-            <Button onClick={handleStartCreateWallet} className="w-full mb-6 py-3">Create New Wallet</Button>
-            
-            <div className="relative my-6">
-               <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-slate-700"></span></div>
-               <div className="relative flex justify-center text-xs uppercase font-bold tracking-wider"><span className="bg-[#101929] px-2 text-slate-500">Or Import Existing</span></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+               <Card 
+                 className="p-8 cursor-pointer hover:border-blue-500/50 hover:bg-slate-800/80 transition-all group border-slate-700/50 relative overflow-hidden" 
+                 onClick={handleStartCreateWallet}
+               >
+                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl -mr-16 -mt-16 group-hover:bg-blue-500/20 transition-all"></div>
+                 <div className="w-12 h-12 bg-blue-500/20 rounded-2xl flex items-center justify-center mb-6 text-blue-400 group-hover:scale-110 transition-transform">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+                 </div>
+                 <h2 className="text-xl font-bold mb-2">Create New Wallet</h2>
+                 <p className="text-slate-400 text-sm leading-relaxed">Generate a new 12-word seed phrase. Best for new users.</p>
+               </Card>
+
+               <Card 
+                 className="p-8 cursor-pointer hover:border-emerald-500/50 hover:bg-slate-800/80 transition-all group border-slate-700/50 relative overflow-hidden"
+                 onClick={() => {}}
+               >
+                 <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl -mr-16 -mt-16 group-hover:bg-emerald-500/20 transition-all"></div>
+                 <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center mb-6 text-emerald-400 group-hover:scale-110 transition-transform">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                 </div>
+                 <h2 className="text-xl font-bold mb-2">Import Existing</h2>
+                 <p className="text-slate-400 text-sm leading-relaxed mb-4">Restore using a seed phrase or private key.</p>
+                 
+                 <div className="space-y-3">
+                   <input 
+                      value={importInput} 
+                      onChange={e=>setImportInput(e.target.value)} 
+                      onClick={(e)=>e.stopPropagation()}
+                      className="w-full bg-slate-950/50 border border-slate-700 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition" 
+                      placeholder="Paste Private Key or Mnemonic" 
+                   />
+                   <Button onClick={(e) => { e.stopPropagation(); handleImportWallet(); }} variant="secondary" className="w-full py-2" disabled={!importInput}>
+                     Import
+                   </Button>
+                 </div>
+               </Card>
             </div>
-            
-            <input value={importInput} onChange={e=>setImportInput(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-4 mb-4 text-sm focus:border-blue-500 outline-none transition" placeholder="Paste Private Key or Mnemonic" />
-            <Button onClick={handleImportWallet} variant="secondary" className="w-full py-3" disabled={!importInput}>Import Wallet</Button>
-          </Card>
+          </div>
        </div>
      );
      // Seed Backup
      if (view === ViewState.SEED_BACKUP && tempWallet) return (
         <div className="min-h-screen flex items-center justify-center p-4">
            <Card className="max-w-md w-full p-8">
-              <h1 className="text-xl font-bold mb-4">Backup Seed Phrase</h1>
-              <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-lg flex gap-3 mb-6">
-                 <svg className="w-5 h-5 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+              <div className="flex justify-between items-center mb-4">
+                  <h1 className="text-xl font-bold">Backup Seed Phrase</h1>
+                  {wallets.length > 0 && <button onClick={()=>setView(ViewState.WALLET_DETAILS)} className="text-slate-500 hover:text-white text-xs uppercase font-bold">Cancel</button>}
+              </div>
+              <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl flex gap-3 mb-6 items-start">
+                 <svg className="w-5 h-5 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
                  <p className="text-xs text-red-300 leading-relaxed">Write these 12 words down in order. If you lose them, your funds are lost forever. Do not share them with anyone.</p>
               </div>
               
               <div className="grid grid-cols-3 gap-3 mb-8">
                  {tempWallet.mnemonic?.split(" ").map((word, i) => (
-                    <div key={i} className="bg-slate-950 border border-slate-800 p-2 rounded-lg text-xs text-center font-mono text-slate-300 relative group">
-                        <span className="absolute top-1 left-2 text-[8px] text-slate-600">{i+1}</span>
+                    <div key={i} className="bg-slate-950 border border-slate-800 p-2.5 rounded-lg text-xs text-center font-mono text-slate-300 relative group hover:border-blue-500/30 transition-colors cursor-default select-all">
+                        <span className="absolute top-1 left-2 text-[8px] text-slate-600 select-none">{i+1}</span>
                         {word}
                     </div>
                  ))}
@@ -804,7 +967,7 @@ export default function App() {
                     <div key={idx}>
                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Word #{idx+1}</label>
                        <input 
-                          className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-sm focus:border-blue-500 outline-none"
+                          className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-sm focus:border-blue-500 outline-none transition"
                           onChange={(e) => {
                              const val = e.target.value.toLowerCase().trim();
                              setSeedVerifyInputs(prev => ({...prev, [idx]: val}));
@@ -814,7 +977,7 @@ export default function App() {
                     </div>
                  ))}
               </div>
-              {statusMessage && <div className="text-red-400 text-sm text-center mb-4">{statusMessage.text}</div>}
+              {statusMessage && <div className="text-red-400 text-sm text-center mb-4 bg-red-900/10 p-2 rounded-lg">{statusMessage.text}</div>}
               <Button 
                  onClick={() => {
                     const words = tempWallet.mnemonic?.split(" ") || [];
@@ -835,7 +998,7 @@ export default function App() {
   // Authenticated Layout
   return (
     <div className="min-h-screen flex flex-col font-sans">
-       <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-40 supports-[backdrop-filter]:bg-slate-900/60">
+       <header className="bg-slate-900/80 backdrop-blur-md border-b border-white/5 sticky top-0 z-40 supports-[backdrop-filter]:bg-slate-900/60">
           <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
              {/* Logo Section */}
              <div className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition group" onClick={()=>setView(ViewState.DASHBOARD)}>
@@ -844,18 +1007,18 @@ export default function App() {
              </div>
              
              {/* Center Nav (Desktop) */}
-             <div className="hidden md:flex gap-1 bg-slate-800/50 p-1.5 rounded-xl border border-slate-700/50">
+             <div className="hidden md:flex gap-1 bg-slate-800/50 p-1 rounded-xl border border-slate-700/50">
                 {[
                    {v: ViewState.DASHBOARD, label: 'Wallet'}, 
                    {v: ViewState.SWAP, label: 'Swap'}, 
                    {v: ViewState.BROWSER, label: 'Browser'}, 
                    {v: ViewState.TRANSACTIONS, label: 'Activity'},
-                   {v: ViewState.WALLET_DETAILS, label: 'Settings'}
+                   {v: ViewState.WALLET_DETAILS, label: 'Manage Wallets'}
                 ].map(item => (
                    <button 
                       key={item.v}
                       onClick={()=>setView(item.v)} 
-                      className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${view===item.v ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${view===item.v ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
                    >
                       {item.label}
                    </button>
@@ -864,12 +1027,20 @@ export default function App() {
 
              {/* Right Section: Network & Lock */}
              <div className="flex items-center gap-3">
+                {/* Active Wallet Indicator */}
+                {activeWallet && (
+                    <div className="hidden lg:flex items-center gap-2 bg-slate-800/30 px-3 py-2 rounded-xl border border-slate-700/30 text-xs font-medium text-slate-300">
+                        <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+                        {activeWallet.name}
+                    </div>
+                )}
+
                 {/* Network Selector */}
                 <div className="relative group z-50">
-                   <button className="bg-slate-800/80 px-4 py-2 rounded-xl text-sm flex items-center gap-2 border border-slate-700 hover:border-slate-600 transition min-w-[140px] justify-between shadow-sm">
+                   <button className="bg-slate-800/60 px-3 py-2 rounded-xl text-sm flex items-center gap-2 border border-slate-700/50 hover:border-slate-600 transition min-w-[120px] justify-between hover:bg-slate-800">
                       <div className="flex items-center gap-2">
-                         <span className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.5)]"></span>
-                         <span className="truncate max-w-[80px] font-medium">{activeNetwork.name}</span>
+                         <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]"></span>
+                         <span className="truncate max-w-[80px] font-medium text-xs sm:text-sm">{activeNetwork.name.split(" ")[0]}</span>
                       </div>
                       <svg className="w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"/></svg>
                    </button>
@@ -879,13 +1050,13 @@ export default function App() {
                         {NETWORKS.map((net, i) => (
                            <div key={i} onClick={() => { setActiveNetwork(net); setView(ViewState.DASHBOARD); }} className="px-4 py-3 hover:bg-slate-800 cursor-pointer text-sm flex items-center justify-between group-item transition-colors border-b border-slate-800/50 last:border-0">
                               <span className="font-medium">{net.name}</span>
-                              {activeNetwork.chainId === net.chainId && <span className="text-green-400"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg></span>}
+                              {activeNetwork.chainId === net.chainId && <span className="text-emerald-400"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg></span>}
                            </div>
                         ))}
                         {customNetworks.map((net, i) => (
                            <div key={`cust-${i}`} onClick={() => { setActiveNetwork(net); setView(ViewState.DASHBOARD); }} className="px-4 py-3 hover:bg-slate-800 cursor-pointer text-sm flex items-center justify-between transition-colors border-b border-slate-800/50 last:border-0">
                               <span>{net.name} <span className="text-xs text-slate-500 ml-1">(Custom)</span></span>
-                              {activeNetwork.chainId === net.chainId && <span className="text-green-400">✓</span>}
+                              {activeNetwork.chainId === net.chainId && <span className="text-emerald-400">✓</span>}
                            </div>
                         ))}
                       </div>
@@ -900,7 +1071,7 @@ export default function App() {
                 {/* Lock Button */}
                 <button 
                    onClick={handleLock} 
-                   className="bg-slate-800/80 p-2 rounded-xl text-slate-400 hover:text-red-400 hover:bg-slate-800 border border-slate-700 transition shadow-sm" 
+                   className="bg-slate-800/60 p-2 rounded-xl text-slate-400 hover:text-red-400 hover:bg-slate-800 border border-slate-700/50 transition" 
                    title="Lock Wallet"
                 >
                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
@@ -920,8 +1091,7 @@ export default function App() {
                 <button onClick={()=>navigateTo(ViewState.SWAP)} className="block w-full text-left p-3 rounded-lg hover:bg-slate-800 transition">Token Swap</button>
                 <button onClick={()=>navigateTo(ViewState.BROWSER)} className="block w-full text-left p-3 rounded-lg hover:bg-slate-800 transition">DApp Browser</button>
                 <button onClick={()=>navigateTo(ViewState.TRANSACTIONS)} className="block w-full text-left p-3 rounded-lg hover:bg-slate-800 transition">History</button>
-                <button onClick={()=>navigateTo(ViewState.WALLET_DETAILS)} className="block w-full text-left p-3 rounded-lg hover:bg-slate-800 transition">Settings</button>
-                <button onClick={handleLock} className="block w-full text-left p-3 rounded-lg hover:bg-red-900/10 text-red-400 transition font-medium">Lock Wallet</button>
+                <button onClick={()=>navigateTo(ViewState.WALLET_DETAILS)} className="block w-full text-left p-3 rounded-lg hover:bg-slate-800 transition">Manage Wallets</button>
              </div>
           )}
        </header>
@@ -935,6 +1105,53 @@ export default function App() {
                    <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
                 )}
                 <span className="font-medium text-sm">{statusMessage.text}</span>
+             </div>
+          )}
+
+          {view === ViewState.ADD_WALLET_SELECT && (
+             <div className="max-w-2xl mx-auto animate-in fade-in">
+                <div className="flex gap-4 mb-6 items-center">
+                   <button onClick={()=>setView(ViewState.WALLET_DETAILS)} className="p-2 hover:bg-slate-800 rounded-full transition"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg></button>
+                   <h2 className="text-2xl font-bold">Add Wallet</h2>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <Card 
+                     className="p-8 cursor-pointer hover:border-blue-500/50 hover:bg-slate-800/80 transition-all group border-slate-700/50 relative overflow-hidden" 
+                     onClick={handleStartCreateWallet}
+                   >
+                     <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl -mr-16 -mt-16 group-hover:bg-blue-500/20 transition-all"></div>
+                     <div className="w-12 h-12 bg-blue-500/20 rounded-2xl flex items-center justify-center mb-6 text-blue-400 group-hover:scale-110 transition-transform">
+                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/></svg>
+                     </div>
+                     <h2 className="text-xl font-bold mb-2">Create New</h2>
+                     <p className="text-slate-400 text-sm leading-relaxed">Generate a new 12-word seed phrase.</p>
+                   </Card>
+
+                   <Card 
+                     className="p-8 cursor-pointer hover:border-emerald-500/50 hover:bg-slate-800/80 transition-all group border-slate-700/50 relative overflow-hidden"
+                     onClick={()=>{}}
+                   >
+                     <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl -mr-16 -mt-16 group-hover:bg-emerald-500/20 transition-all"></div>
+                     <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center mb-6 text-emerald-400 group-hover:scale-110 transition-transform">
+                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                     </div>
+                     <h2 className="text-xl font-bold mb-2">Import Existing</h2>
+                     <p className="text-slate-400 text-sm leading-relaxed mb-4">Restore using a seed phrase or private key.</p>
+                     
+                     <div className="space-y-3">
+                       <input 
+                          value={importInput} 
+                          onChange={e=>setImportInput(e.target.value)} 
+                          onClick={(e)=>e.stopPropagation()}
+                          className="w-full bg-slate-950/50 border border-slate-700 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition" 
+                          placeholder="Paste Private Key or Mnemonic" 
+                       />
+                       <Button onClick={(e) => { e.stopPropagation(); handleImportWallet(); }} variant="secondary" className="w-full py-2" disabled={!importInput}>
+                         Import
+                       </Button>
+                     </div>
+                   </Card>
+                </div>
              </div>
           )}
 
@@ -960,19 +1177,25 @@ export default function App() {
                 <div className="relative group">
                    <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl blur opacity-30 group-hover:opacity-40 transition duration-500"></div>
                    <Card className="text-center py-12 relative overflow-hidden border-0 bg-gradient-to-br from-slate-900 to-slate-950 rounded-3xl">
-                      {/* Abstract Shapes */}
-                      <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
-                      <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-500/5 rounded-full blur-3xl -ml-16 -mb-16 pointer-events-none"></div>
+                      {/* Background Pattern */}
+                      <svg className="absolute inset-0 w-full h-full opacity-[0.03]" xmlns="http://www.w3.org/2000/svg">
+                        <defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="1"/></pattern></defs>
+                        <rect width="100%" height="100%" fill="url(#grid)" />
+                      </svg>
                       
                       <div className="relative z-10">
                          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700/50 mb-6 backdrop-blur-sm">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                             <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">{activeNetwork.name} Mainnet</span>
                          </div>
                          
-                         <h2 className="text-5xl md:text-6xl font-extrabold text-white mb-8 tracking-tight drop-shadow-sm">
-                            {currentNetworkTokens.find(t=>t.isNative)?.balance || "0.00"} <span className="text-2xl md:text-3xl font-bold text-slate-400">{activeNetwork.symbol}</span>
+                         <h2 className="text-5xl md:text-6xl font-extrabold text-white mb-2 tracking-tight drop-shadow-sm tabular-nums">
+                            $ {totalFiatBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                          </h2>
+                         <p className="text-slate-500 font-medium text-lg mb-8 flex items-center justify-center gap-2">
+                             <span>{currentNetworkTokens.find(t=>t.isNative)?.balance || "0.00"}</span>
+                             <span className="font-bold">{activeNetwork.symbol}</span>
+                         </p>
                          
                          <div className="flex justify-center gap-4">
                             <Button onClick={()=>setView(ViewState.SEND)} className="rounded-full px-8 shadow-blue-500/20">
@@ -993,34 +1216,55 @@ export default function App() {
                 
                 {/* Assets List */}
                 <div>
-                   <div className="flex justify-between items-center px-4 mb-3">
+                   <div className="flex justify-between items-center px-2 mb-4">
                       <h3 className="font-bold text-lg text-slate-200">Assets</h3>
-                      <button onClick={()=>{setImportTokenAddress(""); setImportTokenPreview(null); setView(ViewState.IMPORT_TOKEN)}} className="text-blue-400 text-xs font-bold uppercase tracking-wider hover:text-blue-300 transition bg-blue-900/20 px-3 py-1.5 rounded-lg border border-blue-900/30">+ Import Token</button>
+                      <button onClick={()=>{setImportTokenAddress(""); setImportTokenPreview(null); setView(ViewState.IMPORT_TOKEN)}} className="text-blue-400 text-xs font-bold uppercase tracking-wider hover:text-blue-300 transition bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/20 hover:border-blue-500/40 hover:bg-blue-500/20">+ Import Token</button>
                    </div>
                    
-                   <div className="space-y-3">
-                      {currentNetworkTokens.map(t => (
-                         <Card key={t.address} className="flex justify-between items-center p-4 hover:bg-slate-800/80 transition cursor-default group border-slate-800/60 hover:border-blue-500/20 shadow-sm" noPadding>
-                            <div className="flex items-center gap-4 p-4 w-full">
-                               <TokenIcon symbol={t.symbol} address={t.address} src={t.logoUrl} className="w-12 h-12 shadow-md" />
-                               <div className="flex-1">
-                                  <div className="flex justify-between items-start">
-                                     <div>
-                                        <div className="font-bold text-lg text-slate-100 group-hover:text-white transition-colors">{t.name}</div>
-                                        <div className="text-xs text-slate-500 font-bold tracking-wider">{t.symbol}</div>
-                                     </div>
-                                     <div className="text-right">
-                                        <div className="font-mono text-lg font-medium text-slate-200 tracking-tight">{parseFloat(t.balance) > 0 ? parseFloat(t.balance).toFixed(6) : "0.00"}</div>
-                                        {/* Placeholder for Fiat Value if available later */}
-                                        <div className="text-xs text-slate-600 hidden group-hover:block animate-in fade-in">≈ $0.00</div> 
-                                     </div>
-                                  </div>
-                               </div>
-                            </div>
-                         </Card>
-                      ))}
-                      {currentNetworkTokens.length === 0 && <div className="text-center text-slate-500 py-12 bg-slate-900/30 rounded-2xl border border-slate-800 border-dashed">No assets found on this network.</div>}
-                   </div>
+                   <Card className="overflow-hidden" noPadding>
+                     <div className="overflow-x-auto">
+                       <table className="w-full">
+                         <thead className="bg-slate-900/50 border-b border-slate-800">
+                           <tr>
+                             <th className="text-left py-3 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider">Asset</th>
+                             <th className="text-right py-3 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider">Price</th>
+                             <th className="text-right py-3 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider">Balance</th>
+                             <th className="text-right py-3 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider">Value</th>
+                           </tr>
+                         </thead>
+                         <tbody className="divide-y divide-slate-800/50">
+                            {currentNetworkTokens.map(t => {
+                              const bal = parseFloat(t.balance);
+                              const price = t.priceUsd || 0;
+                              const value = bal * price;
+                              return (
+                                <tr key={t.address} className="hover:bg-slate-800/30 transition-colors group cursor-default">
+                                  <td className="py-4 px-6">
+                                    <div className="flex items-center gap-3">
+                                      <TokenIcon symbol={t.symbol} address={t.address} src={t.logoUrl} className="w-10 h-10 shadow-md" />
+                                      <div>
+                                        <div className="font-bold text-slate-200">{t.name}</div>
+                                        <div className="text-xs text-slate-500 font-mono">{t.symbol}</div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="py-4 px-6 text-right font-mono text-sm text-slate-400">
+                                    {price > 0 ? `$${price.toLocaleString(undefined, {maximumFractionDigits: 6})}` : '-'}
+                                  </td>
+                                  <td className="py-4 px-6 text-right font-mono text-sm text-slate-200 font-medium">
+                                    {bal > 0 ? bal.toFixed(6) : "0.00"}
+                                  </td>
+                                  <td className="py-4 px-6 text-right font-mono text-sm font-bold text-emerald-400">
+                                    {value > 0 ? `$${value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '$0.00'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                         </tbody>
+                       </table>
+                       {currentNetworkTokens.length === 0 && <div className="text-center text-slate-500 py-12">No assets found on this network.</div>}
+                     </div>
+                   </Card>
                 </div>
              </div>
           )}
@@ -1124,14 +1368,14 @@ export default function App() {
                    ) : (
                      <div className="relative z-10">
                        {/* Input Token */}
-                       <div className="bg-slate-950/50 border border-slate-700 p-4 rounded-2xl mb-2 transition focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/20">
+                       <div className="bg-slate-950/60 border border-transparent hover:border-slate-700 focus-within:border-blue-500/50 focus-within:bg-slate-900 focus-within:ring-1 focus-within:ring-blue-500/20 p-4 rounded-2xl mb-2 transition-all">
                           <div className="flex justify-between text-xs mb-2 text-slate-400 font-medium">
                              <span>Pay</span>
-                             <span className="cursor-pointer hover:text-blue-400 transition-colors" onClick={handleSwapMax}>Max: {swapTokenIn?.balance ? parseFloat(swapTokenIn.balance).toFixed(4) : '0'}</span>
+                             <span className="cursor-pointer hover:text-blue-400 transition-colors bg-slate-800 px-2 rounded" onClick={handleSwapMax}>Max: {swapTokenIn?.balance ? parseFloat(swapTokenIn.balance).toFixed(4) : '0'}</span>
                           </div>
                           <div className="flex items-center gap-3">
                              <input type="number" value={swapAmountIn} onChange={e=>setSwapAmountIn(e.target.value)} className="bg-transparent text-3xl font-bold w-full outline-none placeholder-slate-700 text-white" placeholder="0" />
-                             <select value={swapTokenIn?.address||""} onChange={e=>setSwapTokenIn(currentNetworkTokens.find(t=>t.address===e.target.value)||null)} className="bg-slate-800 text-white rounded-xl p-2 font-bold border border-slate-700 outline-none focus:ring-2 focus:ring-blue-500 max-w-[130px] shadow-lg">
+                             <select value={swapTokenIn?.address||""} onChange={e=>setSwapTokenIn(currentNetworkTokens.find(t=>t.address===e.target.value)||null)} className="bg-slate-800 text-white rounded-xl p-2 font-bold border border-slate-700 outline-none focus:ring-2 focus:ring-blue-500 max-w-[130px] shadow-lg cursor-pointer">
                                 {currentNetworkTokens.map(t=><option key={t.address} value={t.address}>{t.symbol}</option>)}
                              </select>
                           </div>
@@ -1139,13 +1383,13 @@ export default function App() {
                        
                        {/* Switcher */}
                        <div className="flex justify-center -my-5 relative z-20">
-                          <button onClick={handleSwapSwitch} className="bg-slate-800 border-4 border-slate-900 p-2.5 rounded-xl hover:bg-slate-700 hover:rotate-180 transition duration-300 shadow-xl group">
+                          <button onClick={handleSwapSwitch} className="bg-slate-800 border-4 border-slate-900 p-2.5 rounded-xl hover:bg-slate-700 hover:scale-110 hover:rotate-180 transition-all duration-300 shadow-xl group">
                              <svg className="w-5 h-5 text-blue-400 group-hover:text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 14l-7 7m0 0l-7-7m7 7V3" /></svg>
                           </button>
                        </div>
                        
                        {/* Output Token */}
-                       <div className="bg-slate-950/50 border border-slate-700 p-4 rounded-2xl mt-2 mb-6 transition">
+                       <div className="bg-slate-950/60 border border-transparent hover:border-slate-700 focus-within:border-blue-500/50 focus-within:bg-slate-900 focus-within:ring-1 focus-within:ring-blue-500/20 p-4 rounded-2xl mt-2 mb-6 transition-all">
                           <div className="flex justify-between text-xs mb-2 text-slate-400 font-medium">
                              <span>Receive (Estimated)</span>
                              <span>Bal: {swapTokenOut?.balance ? parseFloat(swapTokenOut.balance).toFixed(4) : '0'}</span>
@@ -1154,7 +1398,7 @@ export default function App() {
                              <div className={`text-3xl font-bold w-full ${isQuoting ? 'text-slate-600 animate-pulse' : 'text-slate-300'}`}>
                                 {isQuoting ? '...' : (swapAmountOut ? parseFloat(swapAmountOut).toFixed(6) : "0")}
                              </div>
-                             <select value={swapTokenOut?.address||""} onChange={e=>setSwapTokenOut(currentNetworkTokens.find(t=>t.address===e.target.value)||null)} className="bg-slate-800 text-white rounded-xl p-2 font-bold border border-slate-700 outline-none focus:ring-2 focus:ring-blue-500 max-w-[130px] shadow-lg">
+                             <select value={swapTokenOut?.address||""} onChange={e=>setSwapTokenOut(currentNetworkTokens.find(t=>t.address===e.target.value)||null)} className="bg-slate-800 text-white rounded-xl p-2 font-bold border border-slate-700 outline-none focus:ring-2 focus:ring-blue-500 max-w-[130px] shadow-lg cursor-pointer">
                                 {currentNetworkTokens.map(t=><option key={t.address} value={t.address}>{t.symbol}</option>)}
                              </select>
                           </div>
@@ -1349,13 +1593,73 @@ export default function App() {
              </div>
           )}
           
-          {view === ViewState.WALLET_DETAILS && (
+          {view === ViewState.WALLET_DETAILS && activeWallet && (
              <Card className="max-w-md mx-auto">
-                <div className="flex gap-4 mb-6 items-center"><button onClick={()=>setView(ViewState.DASHBOARD)} className="p-2 hover:bg-slate-800 rounded-full transition"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg></button><h2 className="font-bold text-xl">Wallet Settings</h2></div>
+                <div className="flex gap-4 mb-6 items-center"><button onClick={()=>setView(ViewState.DASHBOARD)} className="p-2 hover:bg-slate-800 rounded-full transition"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg></button><h2 className="font-bold text-xl">Manage Wallets</h2></div>
                 
                 <div className="space-y-8">
+                   {/* Wallet List Section */}
                    <div>
-                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 ml-1">Security</h3>
+                       <div className="flex justify-between items-center mb-3 ml-1">
+                           <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">My Wallets</h3>
+                           <button onClick={handleAddNewWallet} className="text-xs text-blue-400 font-bold uppercase tracking-wider hover:text-blue-300">+ Add New</button>
+                       </div>
+                       <div className="space-y-2">
+                           {wallets.map((w) => (
+                               <div 
+                                   key={w.id} 
+                                   onClick={() => handleSwitchWallet(w.id)}
+                                   className={`p-4 rounded-xl border cursor-pointer transition-all flex justify-between items-center group ${w.id === activeWalletId ? 'bg-blue-600/10 border-blue-500/50 shadow-md' : 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600'}`}
+                               >
+                                   <div className="flex items-center gap-3">
+                                       <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${w.id === activeWalletId ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-400'}`}>
+                                           {w.name.substring(0,1)}
+                                       </div>
+                                       <div>
+                                           <div className={`font-bold text-sm ${w.id === activeWalletId ? 'text-white' : 'text-slate-300'}`}>{w.name}</div>
+                                           <div className="text-[10px] font-mono text-slate-500">{formatAddress(w.address)}</div>
+                                       </div>
+                                   </div>
+                                   {w.id === activeWalletId && (
+                                       <div className="text-blue-400">
+                                           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/></svg>
+                                       </div>
+                                   )}
+                               </div>
+                           ))}
+                       </div>
+                   </div>
+
+                   <hr className="border-slate-800" />
+
+                   <div>
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 ml-1">Active Wallet Settings</h3>
+                      <div className="bg-slate-800/50 border border-slate-700/50 p-4 rounded-xl mb-4">
+                        <label className="text-xs text-slate-500 font-bold uppercase mb-2 block">Edit Name</label>
+                        <div className="flex gap-2">
+                           {isEditingName ? (
+                               <>
+                                  <input 
+                                    value={editNameInput} 
+                                    onChange={e => setEditNameInput(e.target.value)} 
+                                    className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+                                    autoFocus
+                                    placeholder="Enter wallet name"
+                                  />
+                                  <Button size="sm" onClick={handleSaveWalletName}>Save</Button>
+                                  <Button size="sm" variant="secondary" onClick={() => setIsEditingName(false)}>Cancel</Button>
+                               </>
+                           ) : (
+                               <div className="flex justify-between items-center w-full">
+                                  <span className="font-medium text-lg text-white pl-1">{activeWallet.name}</span>
+                                  <button onClick={() => { setEditNameInput(activeWallet.name); setIsEditingName(true); }} className="p-2 hover:bg-slate-700 rounded-lg text-blue-400 transition-colors">
+                                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                  </button>
+                               </div>
+                           )}
+                        </div>
+                      </div>
+                      
                       <div className="p-5 bg-red-500/5 border border-red-500/20 rounded-2xl">
                          <h3 className="text-red-400 font-bold mb-2 flex items-center gap-2 text-sm"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg> Export Private Key</h3>
                          <p className="text-xs text-slate-500 mb-4 leading-relaxed">Viewing your private key is dangerous. Never share this with anyone, including support staff.</p>
@@ -1370,9 +1674,9 @@ export default function App() {
                       <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 ml-1">Danger Zone</h3>
                       <button onClick={handleResetApp} className="w-full border border-red-900/50 text-red-500 p-4 rounded-2xl hover:bg-red-900/10 transition text-sm font-bold flex items-center justify-center gap-2">
                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                         Factory Reset Wallet
+                         Factory Reset App
                       </button>
-                      <p className="text-[10px] text-slate-600 mt-2 text-center">This will wipe all data from this browser. Make sure you have your backup.</p>
+                      <p className="text-[10px] text-slate-600 mt-2 text-center">This will delete ALL wallets from this browser. Make sure you have backups for everything.</p>
                    </div>
                 </div>
              </Card>

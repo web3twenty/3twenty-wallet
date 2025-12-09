@@ -15,14 +15,14 @@ export const Button: React.FC<ButtonProps> = ({
   disabled,
   ...props 
 }) => {
-  const baseStyle = "rounded-xl font-semibold transition-all duration-200 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100";
+  const baseStyle = "rounded-xl font-semibold transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-900";
   
   const variants = {
-    primary: "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20 border border-blue-500/50",
-    secondary: "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 shadow-lg",
-    danger: "bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20",
-    ghost: "bg-transparent hover:bg-white/5 text-slate-400 hover:text-white",
-    glass: "bg-white/5 hover:bg-white/10 text-white border border-white/10 backdrop-blur-md"
+    primary: "bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white shadow-lg shadow-blue-500/25 border border-blue-400/20 focus:ring-blue-500",
+    secondary: "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 shadow-md focus:ring-slate-500",
+    danger: "bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 focus:ring-red-500",
+    ghost: "bg-transparent hover:bg-white/5 text-slate-400 hover:text-white focus:ring-slate-500",
+    glass: "bg-white/5 hover:bg-white/10 text-white border border-white/10 backdrop-blur-md shadow-lg focus:ring-white/20"
   };
 
   const sizes = {

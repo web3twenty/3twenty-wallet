@@ -9,7 +9,7 @@ interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
 export const Card: React.FC<CardProps> = ({ children, className = '', noPadding = false, ...props }) => {
   return (
     <div 
-      className={`glass-panel rounded-2xl shadow-xl transition-all duration-300 ${noPadding ? '' : 'p-6'} ${className}`} 
+      className={`glass-panel rounded-2xl transition-all duration-300 ${noPadding ? '' : 'p-6'} ${className}`} 
       {...props}
     >
       {children}

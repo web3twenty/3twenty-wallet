@@ -8,6 +8,7 @@ export interface Token {
   logoUrl?: string;
   isNative?: boolean;
   chainId?: number;
+  priceUsd?: number; // Added for market value
 }
 
 export interface Network {
@@ -63,4 +64,5 @@ export enum ViewState {
   ADD_NETWORK = 'ADD_NETWORK',
   TRANSACTIONS = 'TRANSACTIONS',
   RESET_WALLET = 'RESET_WALLET',
+  ADD_WALLET_SELECT = 'ADD_WALLET_SELECT',
 }

@@ -131,6 +131,69 @@ export const fetchTokenInfo = async (tokenAddress: string, rpcUrl: string): Prom
   }
 };
 
+export const fetchTokenPrices = async (tokens: Token[], network: Network): Promise<{[address: string]: number}> => {
+  const prices: {[key: string]: number} = {};
+  
+  // 1. Identify CoinGecko Platform ID based on Chain ID
+  const platformMap: Record<number, string> = {
+    56: 'binance-smart-chain',
+    1: 'ethereum',
+    137: 'polygon-pos',
+    43114: 'avalanche'
+  };
+  const platformId = platformMap[network.chainId];
+  if (!platformId) return prices; // No mapping, return empty
+
+  // 2. Filter Tokens (Get only tokens on current chain, excluding native for now)
+  const tokenAddresses = tokens
+    .filter(t => !t.isNative && t.address && t.chainId === network.chainId)
+    .map(t => t.address)
+    .join(',');
+
+  // 3. Fetch Token Prices
+  if (tokenAddresses) {
+      try {
+          const url = `https://api.coingecko.com/api/v3/simple/token_price/${platformId}?contract_addresses=${tokenAddresses}&vs_currencies=usd`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = await res.json();
+            // data format: { "0x123...": { "usd": 1.0 } }
+            Object.keys(data).forEach(addr => {
+                prices[addr.toLowerCase()] = data[addr].usd;
+            });
+          }
+      } catch (e) {
+          console.warn("Error fetching token prices:", e);
+      }
+  }
+  
+  // 4. Fetch Native Token Price separately
+  const nativeIdMap: Record<number, string> = {
+    56: 'binancecoin',
+    1: 'ethereum',
+    137: 'matic-network',
+    43114: 'avalanche-2'
+  };
+  const nativeId = nativeIdMap[network.chainId];
+  if(nativeId) {
+      try {
+          const url = `https://api.coingecko.com/api/v3/simple/price?ids=${nativeId}&vs_currencies=usd`;
+          const res = await fetch(url);
+          if (res.ok) {
+             const data = await res.json();
+             if (data[nativeId]?.usd) {
+                 const nativeToken = tokens.find(t => t.isNative && t.chainId === network.chainId);
+                 if (nativeToken) {
+                     prices[nativeToken.address.toLowerCase()] = data[nativeId].usd;
+                 }
+             }
+          }
+      } catch(e) {}
+  }
+
+  return prices;
+};
+
 export const sendToken = async (
   privateKey: string,
   toAddress: string,
